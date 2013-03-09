@@ -1,0 +1,8 @@
+*.cof 
+*.hex
+*.obj
+*.tmp
+*.map
+*.aws
+*.bat
+*.lst
