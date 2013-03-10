@@ -9,75 +9,99 @@
 .DEF 	displayByte = R18
 
 ; RAM =====================================================
-		.DSEG			; Сегмент ОЗУ
-strPtr: .BYTE 2 	; Указател используется для высирания
-				 	; ответа на приходящий байт
+		.DSEG		; RAM
+strPtr: .BYTE 2 	; Pointer to a string, that are being printed
+					; to UART
  
 ; FLASH ===================================================
-		.CSEG			; Кодовый сегмент
-
-	; Вектор прерываний ===============================
+		.CSEG	
+	; Interrupt Vector ====================================
 		.ORG $000
 		RJMP hard_init
-        .ORG URXCaddr
-        RJMP	RX_OK	  	; (USART,RXC) USART, Rx Complete
-        .ORG UDREaddr
-        RJMP	UD_OK       ; (USART,UDRE) USART Data Register Empty
-        .ORG UTXCaddr
-        RJMP	TX_OK      	; (USART,TXC) USART, Tx Complete
-        .ORG INT_VECTORS_SIZE
-    ; Обработчики прерываний ==========================
+		.ORG URXCaddr
+		RJMP	RX_OK	  	; (USART,RXC) USART, Rx Complete
+		.ORG UDREaddr
+		RJMP	UD_OK       ; (USART,UDRE) USART Data Register Empty
+		.ORG UTXCaddr
+		RJMP	TX_OK      	; (USART,TXC) USART, Tx Complete
+		.ORG INT_VECTORS_SIZE
+
+	; Interrupts ==========================================
+	; The path is
+	; RX_OK 
+	;	|
+	;	Л‡
+	; Forbid an RX interruption
+	;	|
+	;	Л‡
+	; Read a Byte 
+	;	|
+	;	Л‡
+	; If it's bad ---> Set strPtr to the Fail string in codeSeg
+	; If it's good --> Set strPtr to "Ok"		|
+	;							|				|
+	;							Л‡				|
+	; 					Call updateLigth <------в”ј---> A vector table with the good byte
+	; 							|				|		as offset. RET
+	; 							Л‡				|
+	;				Enable UDR empty interrupt <в”
+	;			UDR is now empty and the transfer of bytes
+	;			will immidiately begin. But simulator shows,
+	;			that there are some ticks in main though
+	; RETI to main
+	; ...
+	; UD_OK 
+	; Reading char, ++ptr, saving and yet again. On \0 exiting.
+	
 RX_OK:		
 		PUSHF
-		CLRB UCSRB, RXCIE, tmp1 	; Больше не принимаем, извините
+		CLRB UCSRB, RXCIE, tmp1 	; Shutting the door. We have a 2
+									; byte cache, if smth happens
 		
-		IN	displayByte, UDR		; Забираем
-	
-		; Рожаем ответ в зависимости от валидности
+		IN	displayByte, UDR		; Getting the byte
 		CPI displayByte, maxDispB	; >= maxDispB
 		BRSH bad
 	
 	gud:LDI	tmp1,Low(2*okString)	; Ok!
 		LDI	tmp2,High(2*okString)
-		RCALL updateLight 			; Между делом сразу обновляем светик
+		RCALL updateLight 			; Updating Screen
 		RJMP cnt
 
- 	bad:LDI tmp1,Low(2*failString)	; Fail
- 		LDI tmp2,High(2*failString)
- 		RJMP cnt
+	bad:LDI tmp1,Low(2*failString)	; Fail
+		LDI tmp2,High(2*failString)
+		RJMP cnt
 
 	cnt:STS	strPtr,tmp1				
 		STS	strPtr+1,tmp2					
-		SETB UCSRB, UDRIE, tmp1 	; Отвечаем
+		SETB UCSRB, UDRIE, tmp1 	; Answering the call (UDR is empty, so UD_OK is called)
 		POPF
 		RETI
 UD_OK:
 		PUSHF
-		PUSH	ZL		; Сохраняем в стеке Z
+		PUSH	ZL		
 		PUSH	ZH
  
-		LDS	ZL,strPtr	; Грузим указатели в индексные регистры
+		LDS	ZL,strPtr	
 		LDS	ZH,strPtr+1
  
-		LPM	tmp1,Z+		; Хватаем байт из флеша. Из нашей строки
+		LPM	tmp1,Z+		; Taking a byte from a string
  
-		CPI	tmp1,0		; Если он не ноль, значит читаем дальше
-		BREQ STOP_RX	; Иначе останавливаем передачу
+		CPI	tmp1,0		; \0 check
+		BREQ STOP_RX	
  
-		OUT	UDR,tmp1	; Выдача данных в усарт.
+		OUT	UDR,tmp1	; Pooping to UART
  
-		STS	strPtr,ZL	; Сохраняем указатель 
-		STS	strPtr+1,ZH	; обратно, в память
+		STS	strPtr,ZL	; Saving the pointer
+		STS	strPtr+1,ZH	; back to mem
 Exit_RX:	
-		POP	ZH		; Все достаем из стека, выходим.
-		POP	ZL
+		POP	ZH			; Getting everything back
+		POP	ZL			; and exiting
 		POPF
 		RETI
-	; глушим прерывание по опустошению, выходим из обработчика
 STOP_RX:
 		OUT UDR, displayByte
-		CLRB UCSRB, UDRIE, tmp1 ; Останавливаем передачу
-		SETB UCSRB, RXCIE, tmp1 ; Восстанавливаем прием байтигов
+		CLRB UCSRB, UDRIE, tmp1 ; Stropping the transfer
+		SETB UCSRB, RXCIE, tmp1 ; Listening again
 		RJMP	Exit_RX
 TX_OK:
 		RETI
@@ -101,16 +125,16 @@ hard_init:	; Internal Hardware Init  =====================
 		RJMP init
 
 init:
-		LDI tmp1,Low(RAMEND)	; Инициализация стека
-		OUT SPL,tmp1			; Обязательно!!!
+		LDI tmp1,Low(RAMEND)	; Stack Init
+		OUT SPL,tmp1			
 		LDI tmp1,High(RAMEND)
 		OUT SPH,tmp1
 
 		RCALL uart_init
 		RCALL light_init
 
-		LDI tmp1, 1<<SREG_I ; Включение прерываний
-		OUT SREG, tmp1 	; Только после полной инициализации
+		LDI tmp1, 1<<SREG_I ; Global Interrupt Enable
+		OUT SREG, tmp1 		; Only after a full initialization
 
 		RCALL main
 
@@ -118,17 +142,18 @@ uart_init:
 		LDI 	tmp1,0
 		OUT 	UCSRA, tmp1
  
-		; Реагируем только на приход байтика
+		; Enabling UART, accepting bytes
 		LDI 	tmp1, (1<<RXEN)|(1<<TXEN)|(1<<RXCIE)|(0<<TXCIE)|(0<<UDRIE)
 		OUT 	UCSRB, tmp1	
  
-		; Формат кадра - 8 бит, пишем в регистр UCSRC, за это отвечает бит селектор
+		; 8bit frame
 		LDI 	tmp1, (1<<URSEL)|(1<<UCSZ0)|(1<<UCSZ1)
 		OUT 	UCSRC, tmp1
 		RET
+
 light_init:
-		SETB DDRD, led, tmp1
-		CLRB PORTD,led, tmp1
+		SETB DDRD, led, tmp1 	; Making leg a output
+		CLRB PORTD,led, tmp1 	; With gnd on it
 		RET
 
 main:
@@ -154,6 +179,6 @@ dispTable:
 		RET
 
 ; EEPROM ==================================================
-		.ESEG			; Сегмент EEPROM
+		.ESEG			; РЎРµРіРјРµРЅС‚ EEPROM
 
 
