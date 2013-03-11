@@ -5,19 +5,18 @@
 .equ 	bauddivider = XTAL/(16*baudrate)-1
 .equ 	led = PD7
 .equ	maxDispB = 2
-; .equ	dispTable = 200
 .DEF 	displayByte = R18
 
 ; RAM =====================================================
 		.DSEG		; RAM
 strPtr: .BYTE 2 	; Pointer to a string, that are being printed
 					; to UART
- 
+
 ; FLASH ===================================================
 		.CSEG	
 	; Interrupt Vector ====================================
 		.ORG $000
-		RJMP hard_init
+		RJMP init
 		.ORG URXCaddr
 		RJMP	RX_OK	  	; (USART,RXC) USART, Rx Complete
 		.ORG UDREaddr
@@ -61,17 +60,17 @@ RX_OK:
 		IN	displayByte, UDR		; Getting the byte
 		CPI displayByte, maxDispB	; >= maxDispB
 		BRSH bad
-	
-	gud:LDI	tmp1,Low(2*okString)	; Ok!
+	good:
+        LDI	tmp1,Low(2*okString)	; Ok!
 		LDI	tmp2,High(2*okString)
 		RCALL updateLight 			; Updating Screen
 		RJMP cnt
-
-	bad:LDI tmp1,Low(2*failString)	; Fail
+	bad:
+        LDI tmp1,Low(2*failString)	; Fail
 		LDI tmp2,High(2*failString)
 		RJMP cnt
-
-	cnt:STS	strPtr,tmp1				
+	cnt:
+        STS	strPtr,tmp1				
 		STS	strPtr+1,tmp2					
 		SETB UCSRB, UDRIE, tmp1 	; Answering the call (UDR is empty, so UD_OK is called)
 		POPF
@@ -103,26 +102,13 @@ STOP_RX:
 		CLRB UCSRB, UDRIE, tmp1 ; Stropping the transfer
 		SETB UCSRB, RXCIE, tmp1 ; Listening again
 		RJMP	Exit_RX
+
 TX_OK:
 		RETI
 	; ==================================================
 
 okString:	.db	"Ok! ",0,0
-
 failString: .db "Fail ",0
-
-SetStringPts:
-
-
-		RET
-
-hard_init:	; Internal Hardware Init  =====================
-
-		LDI 	tmp1, low(bauddivider)
-		OUT 	UBRRL,tmp1
-		LDI 	tmp1, high(bauddivider)
-		OUT 	UBRRH,tmp1
-		RJMP init
 
 init:
 		LDI tmp1,Low(RAMEND)	; Stack Init
@@ -133,12 +119,15 @@ init:
 		RCALL uart_init
 		RCALL light_init
 
-		LDI tmp1, 1<<SREG_I ; Global Interrupt Enable
-		OUT SREG, tmp1 		; Only after a full initialization
-
+		SETB SREG,SREG_I,tmp1
 		RCALL main
 
 uart_init:	
+        LDI tmp1, low(bauddivider) ; UART Baudrate 
+		OUT UBRRL,tmp1
+		LDI tmp1, high(bauddivider)
+		OUT UBRRH,tmp1
+
 		LDI 	tmp1,0
 		OUT 	UCSRA, tmp1
  
